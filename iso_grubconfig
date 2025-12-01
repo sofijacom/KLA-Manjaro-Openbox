@@ -1,0 +1,61 @@
+#!/bin/bash
+## iso_grubconfig
+# Determine FirstRib grub stanzas for menu.lst and grub.conf
+# Revision Date: 13 September 2024
+# Copyright: Licence: MIT
+
+## Run this script from your FirstRib distro installation directory
+
+progname="iso_grubconfig"; version="1.0.0"; revision="-rc1"
+
+case "$1" in
+	'--version') printf "$progname ${version}${revision}\n"; exit 0;;
+	'-h'|'--help'|'-?') printf "Run this script from your FirstRib distro installation directory with command:
+  ./iso_grubconfig\n";exit 0;;
+	"-*") printf "option $1 not available\n";exit 0;;
+esac
+
+_grub_config (){
+	cd "$HERE"
+	subdir="$bootdir"
+	bootuuid=`df . | awk '/^\/dev/ {print $1}' | xargs blkid -s UUID | awk -F\" '{print $2}'`
+	printf "
+Assuming names: kernel is vmlinuz and initrd is initrd.gz and booting is
+from this build directory and needed modules and firmware are present:
+"
+if [ "$bootiso" != '*.iso' ];then
+isotext="
+########################## grub.cfg (BOOT from ISO):
+menuentry \"${subdir}\" {
+  iso_path=\"/${subdir}/${bootiso}\"
+  export iso_path
+  search --set=root --file \$iso_path
+  probe -u -s rootuuid \$root
+  export rootuuid
+  loopback loop \$iso_path
+  root=(loop)
+  configfile /boot/grub/loopback.cfg
+  loopback --delete loop
+}"
+fi
+printf "$isotext
+
+########################## uuid method:
+menuentry \"${subdir}\" {
+  insmod ext2
+  search --no-floppy --fs-uuid --set $bootuuid
+  linux /$subdir/vmlinuz w_bootfrom=UUID=${bootuuid}=/$subdir w_changes=RAM2
+  initrd /$subdir/initrd.gz
+}
+
+Refer to $PWD/iso_grub_config.txt for
+copy of this information plus blkid info.\n" | tee iso_grub_config.txt
+	blkid -s UUID >> iso_grub_config.txt
+}
+
+HERE="`pwd`"
+bootdir=`basename "$HERE"` # for use with grub config
+for bootiso in *.iso; do :;done
+_grub_config
+exit 0
+

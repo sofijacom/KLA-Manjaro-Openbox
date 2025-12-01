@@ -1,0 +1,89 @@
+#!/bin/bash
+# fredx181, 2023-11-21
+
+if findmnt | grep -q "/mnt/layers/uc_ro"; then
+RAM_2=yes
+export UC="$(findmnt | grep "/mnt/layers/uc_ro" | awk '{print $3}' | sed 's#[][]##g; s#dev#mnt#g')"
+#echo $UC
+else 
+export UC="$(findmnt | grep -o "upperdir=.*/upper_changes" | head -1 | sed 's#upperdir=##g')"
+fi
+
+if [ "$RAM_2" = "yes" ]; then
+yad --center --borders=10 --title="RAM2 mode detected" --text="\n Looks like you are running the system with w_changes=RAM2 mode (save on demand) \n If you want to include the current changes in a restore point to be created: \n Click 'Cancel' and run <b>save2flash</b> first \n Or: click 'OK' to continue" --width=600
+ret=$?
+[[ $ret -ne 0 ]] && exit
+fi
+
+create_restore () {    # create restore point
+s=$(date +"%Y%m%d%H%M%S")
+mkdir -p $(dirname "$UC")/upper_changes_$s
+ss="${s::4}-${s:4:2}-${s:6:2}"
+t="${s:8:2}:${s:10:2}:${s:12:2}"
+yad --center --borders=15 --text=" <b><big><big>Copying...</big></big></b>  \n <b><big><big>Please wait . . .</big></big></b>  " --height=70 --no-buttons --undecorated --on-top & 
+cp -a "$(dirname "$UC")/upper_changes/"* "$(dirname "$UC")/upper_changes_$s/"
+echo "Restore point: $(dirname "$UC")/upper_changes_$s created !"
+echo "Point of Time: $(date --date=$ss +"%d %h %Y") $t"
+sleep 2
+kill $!
+echo "[At: $(date --date=$ss +"%d %h %Y") $t] Created: upper_changes_$s $(date --date=$ss +"%d %h %Y") $t" >> "$(dirname ${UC})/restore_history"
+yad --center --title="Restore point created" --text="\n Restore point: $(dirname "$UC")/upper_changes_$s created ! \n Point of Time: $(date --date=$ss +"%d %h %Y") $t \n\n See also info in created history log: \n $(dirname ${UC})/restore_history" --width 600 --button="Close:0"
+}; export -f create_restore
+
+if find "$(dirname "$UC")" -type d -name "upper_changes_*" |  grep -v ".bak"; then
+yad --center --title="Create or Restore ?" --text="\n Would you like to CREATE a restore point ?\n Or RESTORE to a point in history ?\n" --button="CREATE:0"  --button="RESTORE:2" --button="CANCEL:1"
+ret=$?
+
+if [[ $ret -eq 0 ]]; then
+create_restore
+
+elif [[ $ret -eq 2 ]]; then
+rm /tmp/RESTORElist 2> /dev/null
+#set -x
+while read s; do
+echo $s >> /tmp/RESTORElist
+s="$(echo "$s" | sed 's#upper_changes_##')"
+ss="${s::4}${s:4:2}${s:6:2}"
+t="${s:8:2}:${s:10:2}:${s:12:2}"
+echo "$(date --date=$ss +"%d %h %Y") $t" >> /tmp/RESTORElist
+done <<< "$(find $(dirname "$UC") -name "upper_changes_*" | grep -v ".bak" | sed "s#$(dirname ${UC})/##g")"
+
+result=$(cat /tmp/RESTORElist | yad --title="Choose restore point" --text="Choose restore point" --list --column Name --column Date --width=520 --height=400)
+ret=$?
+[[ $ret -ne 0 ]] && exit
+export rest="`echo $result | cut -d "|" -f 1`"
+export d="`echo $result | cut -d "|" -f 2`"
+
+if [ -z "$rest" ]; then
+yad --center --title="Nothing selected" --text="\n Nothing selected\n Exiting..." --button="Close:0"
+exit
+fi
+
+echo "$rest will be renamed to upper_changes, applied after reboot"
+# rename original upper_changes to upper_changes<timestamp>.bak 
+s=$(date +"%Y%m%d%H%M%S")
+ss="${s::4}${s:4:2}${s:6:2}"
+t="${s:8:2}:${s:10:2}:${s:12:2}"
+mv -f "$(dirname ${UC})/upper_changes" "$(dirname ${UC})/upper_changes_${s}.bak"
+echo "[At: $(date --date=$ss +"%d %h %Y") $t] Restored: $rest $d Original upper_changes renamed to upper_changes_${s}.bak" >> "$(dirname ${UC})/restore_history"
+# rename 'timestamped' upper_changes to upper_changes
+mv -f "$(dirname ${UC})/$rest" "$(dirname ${UC})/upper_changes"
+rm -f /tmp/RESTORElist
+yad --center --borders=10 --title="Restored..." --text=" Restored to: \n Point of Time: $(date --date=$ss +"%d %h %Y") $t \n <b>Reboot to apply</b> \n (the original upper_changes folder is renamed to <b>upper_changes_${s}.bak</b>)\n (remove <b>.bak</b> to make it part of history again, so that it can be chosen from the restore list)\n\n See also info in created history log: \n $(dirname ${UC})/restore_history \n\n <b>Note:</b> Direct reboot is adviced ! \n Because any change you make in the system before rebooting  will <b>NOT</b> have any effect \n <b>Reboot Now ?</b>" --width=700 --button="YES:0"  --button="no:1"
+[ $? -eq 0 ] && reboot || exit
+
+else
+exit
+fi
+
+else
+yad --title="Create Restore point ?" --text="\n No restore points found yet. \n Would you like to create a restore point ?\n (will create a timestamped upper_changes folder)\n"
+ret=$?
+[[ $ret -ne 0 ]] && exit
+create_restore
+fi
+
+
+
+
+
